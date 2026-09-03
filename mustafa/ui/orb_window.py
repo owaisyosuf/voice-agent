@@ -108,12 +108,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.status.setStyleSheet("color:#88ccff; font-size:16px; font-weight:bold;")
 
-        self.transcript = QtWidgets.QLabel('Say "Hey Mustafa"')
+        self.transcript = QtWidgets.QLabel("Type a command below, or click Listen")
         self.transcript.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.transcript.setWordWrap(True)
         self.transcript.setStyleSheet("color:#5f9fc0; font-size:13px;")
 
-        self.listen_btn = QtWidgets.QPushButton("Listen")
+        self.input_box = QtWidgets.QLineEdit()
+        self.input_box.setPlaceholderText("e.g.  open notepad   /   notepad kholo   /   close chrome")
+        self.input_box.setClearButtonEnabled(True)
+        self.input_box.setStyleSheet(
+            "QLineEdit{background:#0a1620; color:#d0f0ff; border:1px solid #1e5a75;"
+            " border-radius:18px; padding:10px 16px; font-size:14px;}"
+            "QLineEdit:focus{border:1px solid #00d0ff;}"
+        )
+
+        self.listen_btn = QtWidgets.QPushButton("🎤 Listen (mic)")
         self.listen_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.listen_btn.setStyleSheet(
             "QPushButton{background:#0a2a3a; color:#00d0ff; border:1px solid #00d0ff;"
@@ -125,6 +134,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.orb, 1)
         layout.addWidget(self.status)
         layout.addWidget(self.transcript)
+        layout.addWidget(self.input_box)
         layout.addWidget(self.listen_btn, 0, QtCore.Qt.AlignmentFlag.AlignCenter)
 
     # --- slots wired from the worker thread ---
