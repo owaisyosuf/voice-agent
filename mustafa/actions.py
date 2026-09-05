@@ -29,10 +29,14 @@ APP_MAP = {
 
 
 def open_target(name: str):
-    """Launch an app/file. Returns (ok: bool, spoken_message: str)."""
+    """Launch an app/file. Returns (ok: bool, speak_message: str, display_message: str).
+
+    `speak_message` is Urdu script (correct TTS accent); `display_message` is the same
+    thing in Roman Urdu, for on-screen text.
+    """
     name = (name or "").strip().lower()
     if not name:
-        return False, "Kya kholna hai samajh nahi aaya."
+        return False, "کیا کھولنا ہے سمجھ نہیں آیا۔", "Kya kholna hai samajh nahi aaya."
 
     launch = APP_MAP.get(name, (None,))[0]
     try:
@@ -40,17 +44,21 @@ def open_target(name: str):
             subprocess.Popen(launch, shell=True)
         else:
             os.startfile(name)  # try as a raw command or file path
-        return True, f"{name} khol raha hoon."
+        return True, f"{name} کھول رہا ہوں۔", f"{name} khol raha hoon."
     except Exception as exc:
         print(f"[actions] open error: {exc}")
-        return False, f"{name} khol nahi paya."
+        return False, f"{name} کھول نہیں پایا۔", f"{name} khol nahi paya."
 
 
 def close_target(name: str):
-    """Terminate an app by name. Returns (ok: bool, spoken_message: str)."""
+    """Terminate an app by name. Returns (ok: bool, speak_message: str, display_message: str).
+
+    `speak_message` is Urdu script (correct TTS accent); `display_message` is the same
+    thing in Roman Urdu, for on-screen text.
+    """
     name = (name or "").strip().lower()
     if not name:
-        return False, "Kya band karna hai samajh nahi aaya."
+        return False, "کیا بند کرنا ہے سمجھ نہیں آیا۔", "Kya band karna hai samajh nahi aaya."
 
     mapped = APP_MAP.get(name, (None, None))[1]
     image = mapped or (name if name.endswith(".exe") else name + ".exe")
@@ -60,11 +68,11 @@ def close_target(name: str):
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            return True, f"{name} band kar diya."
-        return False, f"{name} chal nahi raha tha."
+            return True, f"{name} بند کر دیا۔", f"{name} band kar diya."
+        return False, f"{name} چل نہیں رہا تھا۔", f"{name} chal nahi raha tha."
     except Exception as exc:
         print(f"[actions] close error: {exc}")
-        return False, f"{name} band nahi kar paya."
+        return False, f"{name} بند نہیں کر پایا۔", f"{name} band nahi kar paya."
 
 
 if __name__ == "__main__":

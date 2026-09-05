@@ -16,6 +16,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 # fast Flash model. Change here if you prefer another (see genai.list_models()).
 GEMINI_MODEL = "gemini-flash-latest"
 
+# --- Text-to-speech ---
+# Free Microsoft Edge neural voice (needs internet, no API key). ur-PK-AsadNeural
+# handles Roman Urdu/Hinglish far more naturally than the offline SAPI voices.
+# Falls back to pyttsx3/SAPI automatically if this is unreachable (see tts.py).
+TTS_VOICE = "ur-PK-AsadNeural"
+
 # --- Speech-to-text (Whisper) ---
 # "base" balances speed/accuracy on CPU. Options: tiny, base, small, medium.
 WHISPER_MODEL = "base"

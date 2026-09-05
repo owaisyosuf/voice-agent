@@ -5,3 +5,4 @@ models/
 .venv/
 venv/
 .claude/settings.local.json
+mustafa/data/
