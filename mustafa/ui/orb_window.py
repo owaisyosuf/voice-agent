@@ -105,7 +105,8 @@ class Hairline(QtWidgets.QFrame):
 class MainWindow(QtWidgets.QMainWindow):
     """Public surface used by the worker threads:
     set_state / set_transcript / set_level / append_chat / set_busy,
-    plus the `input_box` and `listen_btn` controls and the signals below.
+    plus the `input_box`, `send_btn`, `listen_btn` and `stop_btn` controls
+    and the signals below.
     """
 
     suggestion = QtCore.pyqtSignal(str)          # example chip clicked
@@ -294,6 +295,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.send_btn.setFixedHeight(50)
         self.send_btn.setMinimumWidth(88)
 
+        # Only ever visible while a command is in flight — it is the way out of a
+        # slow answer, so it takes the place of the disabled Listen button.
+        self.stop_btn = QtWidgets.QPushButton("Stop")
+        self.stop_btn.setObjectName("danger")
+        self.stop_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.setFixedHeight(50)
+        self.stop_btn.setMinimumWidth(96)
+        self.stop_btn.setToolTip("Jawab rok dein")
+        self.stop_btn.hide()
+
         self.listen_btn = QtWidgets.QPushButton("Listen")
         self.listen_btn.setObjectName("primary")
         self.listen_btn.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
@@ -308,6 +319,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         row.addWidget(self.input_box, 1)
         row.addWidget(self.send_btn)
+        row.addWidget(self.stop_btn)
         row.addWidget(self.listen_btn)
         return holder
 
@@ -376,6 +388,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.listen_btn.setText("Busy…" if busy else "Listen")
         self.send_btn.setEnabled(not busy)
         self.input_box.setEnabled(not busy)
+        self.stop_btn.setVisible(busy)
+        self.stop_btn.setEnabled(busy)
         if not busy:
             self.input_box.setFocus()
 

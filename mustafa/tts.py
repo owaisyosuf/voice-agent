@@ -2,9 +2,11 @@
 
 edge-tts calls Microsoft's free Read Aloud service (no API key, but needs internet)
 and gives a real Urdu neural voice that pronounces Roman Urdu/Hinglish far more
-naturally than the robotic English SAPI voices. Rate/pitch are eased off a little
-(see config) because the stock delivery is fast and clipped — slowing it slightly
-and dropping the pitch is most of what makes it read as a calm person.
+naturally than the robotic English SAPI voices. Rate/pitch come from config —
+dropping the pitch is most of what makes it read as a calm person.
+
+Playback is interruptible: `stop()` cuts the current line off mid-sentence, which
+is what the UI's Stop button needs.
 
 If the online call fails (no network), we fall back to the offline pyttsx3/SAPI
 voice, speaking the Roman-script version of the line — SAPI cannot pronounce
@@ -27,6 +29,13 @@ _winmm = ctypes.windll.winmm
 _alias_counter = itertools.count()
 _speak_lock = threading.Lock()  # never let two replies overlap on the speakers
 
+# Interruption. `_stopped` is set by stop() and stays set until the next speak(),
+# so a stop landing in the gap before playback starts still suppresses the line.
+_stopped = threading.Event()
+_playing_lock = threading.Lock()
+_playing_alias = None
+_offline_engine = None
+
 # Characters that are meant to be read, not spoken (Gemini occasionally emits
 # markdown); speaking them aloud is an instant "this is a robot" tell.
 _STRIP = re.compile(r"[*_`#>\[\]]+")
@@ -37,11 +46,20 @@ def _clean(text: str) -> str:
 
 
 def _play_mp3(path: str) -> None:
+    global _playing_alias
     alias = f"mustafa_tts_{next(_alias_counter)}"
     _winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
     try:
+        with _playing_lock:
+            if _stopped.is_set():
+                return
+            _playing_alias = alias
+        # "wait" blocks until the clip ends — or until stop() sends `stop <alias>`
+        # from the UI thread, which makes this return early.
         _winmm.mciSendStringW(f"play {alias} wait", None, 0, None)
     finally:
+        with _playing_lock:
+            _playing_alias = None
         _winmm.mciSendStringW(f"close {alias}", None, 0, None)
 
 
@@ -87,6 +105,7 @@ def _speak_offline(text: str) -> None:
         print(f"[tts] offline voice not installed: {exc}")
         return
 
+    global _offline_engine
     com_initialized = False
     try:
         pythoncom.CoInitialize()
@@ -94,20 +113,39 @@ def _speak_offline(text: str) -> None:
     except Exception:
         pass  # already initialized on this thread — fine, leave its ownership alone
     try:
+        if _stopped.is_set():
+            return
         engine = pyttsx3.init()
         _pick_sapi_voice(engine)
-        engine.setProperty("rate", 160)  # slower than the 175 default = less robotic
+        engine.setProperty("rate", 195)  # brisk; the 175 default drags in Roman Urdu
+        _offline_engine = engine
         engine.say(text)
         engine.runAndWait()
         engine.stop()
     except Exception as exc:
         print(f"[tts] offline fallback error: {exc}")
     finally:
+        _offline_engine = None
         if com_initialized:
             try:
                 pythoncom.CoUninitialize()
             except Exception:
                 pass
+
+
+def stop() -> None:
+    """Cut off whatever is being spoken. Safe to call from any thread, any time."""
+    _stopped.set()
+    with _playing_lock:
+        alias = _playing_alias
+    if alias:
+        _winmm.mciSendStringW(f"stop {alias}", None, 0, None)
+    engine = _offline_engine
+    if engine is not None:
+        try:
+            engine.stop()
+        except Exception:
+            pass
 
 
 def speak(text: str, roman_fallback: str = "") -> None:
@@ -120,9 +158,12 @@ def speak(text: str, roman_fallback: str = "") -> None:
     if not text:
         return
     with _speak_lock:
+        _stopped.clear()
         try:
             _speak_online(text)
         except Exception as exc:
+            if _stopped.is_set():
+                return  # interrupted, not broken — don't repeat the line offline
             print(f"[tts] edge-tts unavailable ({exc}), falling back to offline voice")
             _speak_offline(_clean(roman_fallback) or text)
 

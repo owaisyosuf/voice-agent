@@ -53,9 +53,10 @@ GEMINI_FALLBACK_MODEL = _env_str("GEMINI_FALLBACK_MODEL", "gemini-3.6-flash")
 #   hi-IN-MadhurNeural male, Hindi  (good for heavy Hinglish)
 #   en-IN-PrabhatNeural male, Indian English (use if you mostly speak English)
 TTS_VOICE = _env_str("MUSTAFA_TTS_VOICE", "ur-PK-AsadNeural")
-# Prosody. The stock rate is a touch fast and clipped; easing it off and dropping
-# the pitch slightly is what makes it read as a calm person rather than a machine.
-TTS_RATE = _env_str("MUSTAFA_TTS_RATE", "-8%")     # e.g. "-15%" slower, "+10%" faster
+# Prosody. Dropping the pitch slightly is what makes it read as a calm person
+# rather than a machine; the rate is pushed above the stock delivery because a
+# reply you have to sit through is worse than one that arrives briskly.
+TTS_RATE = _env_str("MUSTAFA_TTS_RATE", "+18%")    # e.g. "+30%" faster, "-10%" slower
 TTS_PITCH = _env_str("MUSTAFA_TTS_PITCH", "-3Hz")  # e.g. "-8Hz" deeper, "+5Hz" brighter
 TTS_VOLUME = _env_str("MUSTAFA_TTS_VOLUME", "+0%")
 

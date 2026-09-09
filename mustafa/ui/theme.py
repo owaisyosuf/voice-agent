@@ -153,6 +153,19 @@ def stylesheet() -> str:
     QPushButton#ghost:pressed {{ background: {rgba(ACCENT, 22)}; }}
     QPushButton#ghost:disabled {{ color: {TEXT_MUTED}; border-color: {LINE_SUBTLE}; }}
 
+    QPushButton#danger {{
+        background: {rgba(STATES["Error"][0], 30)};
+        color: {STATES["Error"][0]};
+        border: 1px solid {rgba(STATES["Error"][0], 120)};
+        border-radius: {RADIUS_PILL}px;
+        padding: 0 {S4}px;
+        font-weight: 700;
+    }}
+    QPushButton#danger:hover {{
+        background: {rgba(STATES["Error"][0], 60)}; color: #ffd7d7;
+    }}
+    QPushButton#danger:pressed {{ background: {rgba(STATES["Error"][0], 90)}; }}
+
     QPushButton#window {{
         background: transparent; color: {TEXT_SECONDARY};
         border: none; border-radius: {RADIUS_SM}px;

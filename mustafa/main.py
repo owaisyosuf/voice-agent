@@ -56,6 +56,10 @@ class CommandWorker(QtCore.QThread):
         super().__init__()
         self._running = True
         self._queue: "queue.Queue" = queue.Queue()
+        # Set by the Stop button; cleared when the next command starts. Every slow
+        # step in _handle checks it, so a stop lands within one step rather than
+        # after the whole turn has played out.
+        self._cancel = threading.Event()
         # Continue the turn count across restarts so it doesn't greet every launch.
         self._turn = history.count() // 2
 
@@ -67,6 +71,11 @@ class CommandWorker(QtCore.QThread):
         # Ignore a second click while a capture is already queued or running.
         if self._queue.empty():
             self._queue.put(("voice", None))
+
+    def request_stop(self):
+        """Abandon the command in flight and fall back to Idle."""
+        self._cancel.set()
+        tts.stop()  # cuts playback mid-sentence; the rest unwinds on its own
 
     def reset_turns(self):
         """Called when the user clears the thread, so it greets afresh."""
@@ -98,6 +107,7 @@ class CommandWorker(QtCore.QThread):
             kind, payload = self._queue.get()
             if kind == "stop" or not self._running:
                 break
+            self._cancel.clear()
             try:
                 self._handle(kind, payload)
             except Exception as exc:  # never let one command crash the app
@@ -105,9 +115,16 @@ class CommandWorker(QtCore.QThread):
                 self.state.emit("Error")
                 self.transcript.emit(str(exc))
                 self.msleep(1500)  # let the Error state be seen before returning to Idle
+            if self._cancel.is_set():
+                self.transcript.emit("Roka gaya.")
             self.state.emit("Idle")
 
+    def _stopped(self) -> bool:
+        return self._cancel.is_set() or not self._running
+
     def _say(self, speak_text: str, display_text: str):
+        if self._stopped():
+            return
         self.state.emit("Speaking")
         self.transcript.emit(display_text)
         self.chat_turn.emit("assistant", display_text)
@@ -121,16 +138,18 @@ class CommandWorker(QtCore.QThread):
         # moment you stop talking, instead of showing "Listening" while it thinks.
         audio, reason = stt.record_utterance(
             on_speech_start=None,
-            should_stop=lambda: not self._running,
+            should_stop=self._stopped,
             on_level=self.level.emit,
         )
         self.level.emit(0.0)
+        if reason == "cancelled":
+            return None
         text = ""
         if reason == "ok":
             self.state.emit("Processing")
             text = stt.transcribe(audio)
-        if reason == "cancelled":
-            return None
+            if self._stopped():  # Whisper can run for seconds; don't act on stale audio
+                return None
         if reason == "no_speech" or (reason == "ok" and not text):
             self._say(*NO_SPEECH)
             return None
@@ -163,6 +182,10 @@ class CommandWorker(QtCore.QThread):
         self.state.emit("Processing")
         self._turn += 1
         intent = brain.think(command, self._turn, history.recent())
+        # Stopped while Gemini was thinking: drop the answer before it can launch
+        # anything, so Stop during Processing never fires an action behind your back.
+        if self._stopped():
+            return
 
         if intent["error"]:
             self.state.emit("Error")
@@ -292,6 +315,7 @@ def main():
     window.input_box.returnPressed.connect(submit_typed)
     window.send_btn.clicked.connect(submit_typed)
     window.listen_btn.clicked.connect(start_listening)
+    window.stop_btn.clicked.connect(worker.request_stop)
     window.suggestion.connect(worker.submit_text)   # example chips in the empty state
     window.clear_requested.connect(clear_history)
     QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Space"), window).activated.connect(start_listening)
