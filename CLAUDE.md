@@ -84,7 +84,7 @@ the orb starts simple.
 | STT | **Whisper (local, e.g. `faster-whisper`)** | offline, free, multilingual — handles English + Urdu + Hinglish; first run downloads a model (~1–2 GB) |
 | Wake word | **"Hey Mustafa"** (e.g. Porcupine custom keyword, or Whisper-based) | hands-free activation |
 | TTS | **edge-tts neural voice** (`ur-PK-AsadNeural`), pyttsx3/SAPI fallback | free, no key; needs internet |
-| Brain (LLM) | **Google Gemini** (`google-generativeai`), Flash-Lite | free API key from Google AI Studio (aistudio.google.com) |
+| Brain (LLM) | **Google Gemini** (`google-genai`), Flash-Lite | free API key from Google AI Studio (aistudio.google.com) |
 
 STT and the wake word run offline; the Gemini call and the neural voice need the network (both free,
 and the voice falls back to the offline SAPI one). No paid services required.

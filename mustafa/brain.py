@@ -7,11 +7,12 @@ stay within the free-tier daily request quota.
 import json
 import re
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from .config import GEMINI_FALLBACK_MODEL, GEMINI_MODEL, require_api_key
 
-_models: dict[str, "genai.GenerativeModel"] = {}
+_client = None
 
 SYSTEM_PROMPT = """You are Mustafa, a warm and respectful Urdu-speaking voice \
 assistant/butler for your user — like Jarvis. The user speaks in English, Urdu, or \
@@ -76,22 +77,19 @@ Examples:
 """
 
 # Ask for JSON directly instead of hoping it shows up inside prose.
-_GENERATION_CONFIG = {
-    "response_mime_type": "application/json",
-    "temperature": 0.7,      # some variety in phrasing, without going off-script
-    "max_output_tokens": 500,
-}
+_CONFIG = types.GenerateContentConfig(
+    system_instruction=SYSTEM_PROMPT,
+    response_mime_type="application/json",
+    temperature=0.7,      # some variety in phrasing, without going off-script
+    max_output_tokens=500,
+)
 
 
-def _get_model(name: str):
-    if name not in _models:
-        genai.configure(api_key=require_api_key())
-        _models[name] = genai.GenerativeModel(
-            name,
-            system_instruction=SYSTEM_PROMPT,
-            generation_config=_GENERATION_CONFIG,
-        )
-    return _models[name]
+def _get_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=require_api_key())
+    return _client
 
 
 def preload() -> None:
@@ -102,19 +100,21 @@ def preload() -> None:
     count_tokens is used because it costs no generation quota.
     """
     try:
-        _get_model(GEMINI_MODEL).count_tokens("hi")
+        _get_client().models.count_tokens(model=GEMINI_MODEL, contents="hi")
     except Exception as exc:
         print(f"[brain] preload skipped: {exc}")
 
 
 def _is_quota_error(exc: Exception) -> bool:
+    if getattr(exc, "code", None) == 429:
+        return True
     text = str(exc).lower()
     return "429" in text or "quota" in text or "rate limit" in text
 
 
 def _should_try_fallback(exc: Exception) -> bool:
     """Rate-limited, or the model isn't available on this key — both are worth a retry."""
-    return _is_quota_error(exc) or "404" in str(exc)
+    return _is_quota_error(exc) or getattr(exc, "code", None) == 404 or "404" in str(exc)
 
 
 def _extract_json(raw: str) -> dict:
@@ -151,7 +151,9 @@ def think(text: str, turn: int = 1, history=None) -> dict:
 
     for model_name in (GEMINI_MODEL, GEMINI_FALLBACK_MODEL):
         try:
-            resp = _get_model(model_name).generate_content(context)
+            resp = _get_client().models.generate_content(
+                model=model_name, contents=context, config=_CONFIG
+            )
             return _parse(_extract_json((resp.text or "").strip()))
         except Exception as exc:  # network/API/parse issues
             print(f"[brain] {model_name} error: {exc}")

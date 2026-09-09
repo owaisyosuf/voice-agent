@@ -91,7 +91,7 @@ Keep layers decoupled so any engine (STT, TTS, LLM, UI) can be swapped independe
 
 1. **UI shell** — window with animated orb + state indicator.
 2. **Audio input (STT)** — mic capture, wake word "Hey Mustafa", speech→text (Whisper local).
-3. **Brain (Gemini)** — text → structured intent (`google-generativeai` SDK).
+3. **Brain (Gemini)** — text → structured intent (`google-genai` SDK).
 4. **Action engine** — executes intent against Windows (open/close).
 5. **Audio output (TTS)** — speaks responses (pyttsx3 / Windows SAPI).
 
@@ -120,7 +120,7 @@ Keep layers decoupled so any engine (STT, TTS, LLM, UI) can be swapped independe
 | STT | **Whisper (local, e.g. `faster-whisper`)** | free (offline; ~1–2 GB model download) |
 | Wake word | **"Hey Mustafa"** (Porcupine custom keyword or Whisper-based) | free |
 | TTS | **pyttsx3 / Windows SAPI** | free (offline) |
-| Brain (LLM) | **Google Gemini** (`google-generativeai`) | free API key (aistudio.google.com) |
+| Brain (LLM) | **Google Gemini** (`google-genai`) | free API key (aistudio.google.com) |
 
 No purchases required. A natural human-voice TTS (ElevenLabs) is an optional paid upgrade for later.
 
