@@ -88,11 +88,13 @@ class CommandWorker(QtCore.QThread):
     # --- worker thread ---
     def run(self):
         self.state.emit("Warming up")
+
+        # Whisper and Gemini know nothing about each other, and one waits on the disk
+        # while the other waits on the network — so warm them at the same time.
+        whisper = threading.Thread(target=self._preload_whisper, daemon=True)
+        whisper.start()
         brain.preload()  # opens the Gemini connection (first call is otherwise slow)
-        try:
-            stt.preload()  # load Whisper now, so the first command isn't slow
-        except Exception as exc:
-            print(f"[worker] whisper preload failed: {exc}")
+        whisper.join()
 
         # Check the microphone once, up front. On a machine without one, this is
         # what stops the wake-word thread from poking a dead device forever.
@@ -118,6 +120,12 @@ class CommandWorker(QtCore.QThread):
             if self._cancel.is_set():
                 self.transcript.emit("Roka gaya.")
             self.state.emit("Idle")
+
+    def _preload_whisper(self):
+        try:
+            stt.preload()  # load Whisper now, so the first command isn't slow
+        except Exception as exc:
+            print(f"[worker] whisper preload failed: {exc}")
 
     def _stopped(self) -> bool:
         return self._cancel.is_set() or not self._running

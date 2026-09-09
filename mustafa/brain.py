@@ -7,9 +7,6 @@ stay within the free-tier daily request quota.
 import json
 import re
 
-from google import genai
-from google.genai import types
-
 from .config import GEMINI_FALLBACK_MODEL, GEMINI_MODEL, require_api_key
 
 _client = None
@@ -76,18 +73,27 @@ Examples:
 فرانس کا دارالحکومت ہے۔", "display": "Paris is the capital of France."}
 """
 
-# Ask for JSON directly instead of hoping it shows up inside prose.
-_CONFIG = types.GenerateContentConfig(
-    system_instruction=SYSTEM_PROMPT,
-    response_mime_type="application/json",
-    temperature=0.7,      # some variety in phrasing, without going off-script
-    max_output_tokens=500,
-)
+# Ask for JSON directly instead of hoping it shows up inside prose. A plain dict
+# rather than types.GenerateContentConfig, so google.genai.types never has to load.
+_CONFIG = {
+    "system_instruction": SYSTEM_PROMPT,
+    "response_mime_type": "application/json",
+    "temperature": 0.7,      # some variety in phrasing, without going off-script
+    "max_output_tokens": 500,
+}
 
 
 def _get_client():
+    """Build the Gemini client on first use.
+
+    google.genai is imported here rather than at module scope because it costs
+    several seconds to load, and at module scope that delay lands before the window
+    can even appear.
+    """
     global _client
     if _client is None:
+        from google import genai
+
         _client = genai.Client(api_key=require_api_key())
     return _client
 
@@ -95,8 +101,8 @@ def _get_client():
 def preload() -> None:
     """Open the Gemini connection at startup.
 
-    The very first API call pays ~20 s of client/auth/channel setup. Doing it while
-    the app is warming up means the user's first real command answers in ~1 s.
+    The first call pays the library import plus auth/channel setup. Doing it while the
+    app is warming up means the user's first real command answers in about a second.
     count_tokens is used because it costs no generation quota.
     """
     try:
