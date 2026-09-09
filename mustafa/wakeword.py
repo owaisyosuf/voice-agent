@@ -30,5 +30,8 @@ def wait_for_wake(should_stop=None) -> bool:
     while True:
         if should_stop and should_stop():
             return False
-        if heard_wake_word(listen(WAKE_CHUNK_SECONDS)):
+        text, mic_ok = listen(WAKE_CHUNK_SECONDS)
+        if not mic_ok:
+            return False   # no microphone — never going to hear anything
+        if heard_wake_word(text):
             return True

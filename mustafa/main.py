@@ -26,6 +26,13 @@ TOO_SHORT = ("آواز بہت مختصر تھی۔ ذرا پوری بات کہی�
 NO_AUDIO = ("مائیکروفون سے کوئی آواز نہیں آ رہی۔ ونڈوز کی ساؤنڈ سیٹنگز میں مائیک منتخب کیجیے۔",
             "Mic se koi awaz nahi aa rahi. Windows Settings > System > Sound > Input "
             "mein apna microphone default set kijiye.")
+MIC_BUSY = ("مائیکروفون ابھی مصروف ہے۔ ایک لمحے بعد دوبارہ کوشش کیجیے۔",
+            "Mic abhi busy hai. Ek lamha baad dobara Listen dabaiye.")
+# Said once at startup when the machine simply has no working microphone, so the
+# Listen button never becomes a mystery.
+NO_MIC_AT_START = ("مائیکروفون نہیں ملا۔ آواز کے بغیر بھی میں حاضر ہوں، نیچے لکھ کر بھیجیے۔",
+                   "Koi kaam karne wala microphone nahi mila — Listen kaam nahi karega. "
+                   "Neeche likh kar hukum dijiye.")
 NOT_UNDERSTOOD = ("سمجھ نہیں آیا۔ دوبارہ لکھیں یا بولیں۔",
                   "Samajh nahi aaya. Dobara likhein ya boliye.")
 # A rate-limited or unreachable brain is not the same thing as not understanding —
@@ -43,6 +50,7 @@ class CommandWorker(QtCore.QThread):
     transcript = QtCore.pyqtSignal(str)
     chat_turn = QtCore.pyqtSignal(str, str)  # (role, text)
     level = QtCore.pyqtSignal(float)         # 0..1 mic loudness while listening
+    mic_missing = QtCore.pyqtSignal()        # no working microphone on this machine
 
     def __init__(self):
         super().__init__()
@@ -76,6 +84,14 @@ class CommandWorker(QtCore.QThread):
             stt.preload()  # load Whisper now, so the first command isn't slow
         except Exception as exc:
             print(f"[worker] whisper preload failed: {exc}")
+
+        # Check the microphone once, up front. On a machine without one, this is
+        # what stops the wake-word thread from poking a dead device forever.
+        if not stt.probe_microphone():
+            print("[worker] no working microphone detected")
+            self.mic_missing.emit()
+            self._say(*NO_MIC_AT_START)
+
         self.state.emit("Idle")
 
         while self._running:
@@ -124,6 +140,10 @@ class CommandWorker(QtCore.QThread):
         if reason == "no_audio":
             self.state.emit("Error")
             self._say(*NO_AUDIO)
+            return None
+        if reason == "mic_busy":
+            self.state.emit("Error")
+            self._say(*MIC_BUSY)
             return None
         return text
 
@@ -180,9 +200,12 @@ class WakeWordWorker(QtCore.QThread):
 
     heard = QtCore.pyqtSignal()
 
+    MAX_DEAD_READS = 3   # give up on a device that hands back nothing
+
     def __init__(self):
         super().__init__()
         self._running = True
+        self._dead_reads = 0
         self._active = threading.Event()
         self._active.set()
 
@@ -204,11 +227,19 @@ class WakeWordWorker(QtCore.QThread):
             try:
                 # stt.listen skips Whisper entirely on a silent chunk, so an empty
                 # room costs almost no CPU here.
-                text = stt.listen(WAKE_CHUNK_SECONDS)
+                text, mic_ok = stt.listen(WAKE_CHUNK_SECONDS)
             except Exception as exc:
                 print(f"[wakeword] error: {exc}")
+                mic_ok, text = False, ""   # counted once, just below
                 self.msleep(500)
+
+            if not mic_ok:
+                self._dead_reads += 1
+                if self._dead_reads >= self.MAX_DEAD_READS:
+                    print("[wakeword] microphone is not delivering audio — listener off")
+                    return   # stop the thread; the Listen button still reports properly
                 continue
+            self._dead_reads = 0
             if not self._active.is_set():
                 continue  # paused mid-chunk (e.g. the user clicked Listen) — drop it
             if self._running and wakeword.heard_wake_word(text):
@@ -235,6 +266,7 @@ def main():
     worker.transcript.connect(window.set_transcript)
     worker.chat_turn.connect(window.append_chat)
     worker.level.connect(window.set_level)
+    worker.mic_missing.connect(wake_worker.stop)   # nothing to listen to; shut it down
     wake_worker.heard.connect(worker.submit_voice)
 
     for role, text, ts in history.all_turns():

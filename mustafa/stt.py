@@ -161,15 +161,30 @@ def _normalize(audio: np.ndarray) -> np.ndarray:
 
 
 def beep(kind: str = "start") -> None:
-    """Short tone so you know exactly when to start and when it stopped listening."""
+    """Short tone so you know exactly when to start and when it stopped listening.
+
+    Played through the normal output device: winsound.Beep goes to the PC-speaker
+    path, which is silent on plenty of machines. That one falls back on it.
+    """
     if not BEEP_ENABLED:
         return
+    freq = 880 if kind == "start" else 560
     try:
-        import winsound
-
-        winsound.Beep(880 if kind == "start" else 560, 90)
+        rate, duration = 44100, 0.09
+        samples = np.arange(int(rate * duration), dtype=np.float32) / rate
+        tone = 0.25 * np.sin(2 * np.pi * freq * samples)
+        fade = int(rate * 0.008)          # ramp the ends or it clicks
+        envelope = np.ones_like(tone)
+        envelope[:fade] = np.linspace(0.0, 1.0, fade)
+        envelope[-fade:] = np.linspace(1.0, 0.0, fade)
+        sd.play((tone * envelope).astype(np.float32), rate, blocking=True)
     except Exception:
-        pass
+        try:
+            import winsound
+
+            winsound.Beep(freq, 90)
+        except Exception:
+            pass
 
 
 # Capture as int16, not float32. Not every Windows backend can hand PortAudio
@@ -184,16 +199,47 @@ def _to_float(audio: np.ndarray) -> np.ndarray:
 
 
 def record(seconds: float) -> np.ndarray:
-    """Record a fixed-length chunk (used by the background wake-word listener)."""
+    """Record a fixed-length chunk (used by the background wake-word listener).
+
+    Returns an EMPTY array if the device delivered nothing in time — meaning the
+    microphone is dead. This used to be `sd.rec()` + `sd.wait()`, which waits for
+    a recording that a dead device never finishes: it blocked forever while
+    holding the microphone lock, so pressing Listen hung in Listening for good.
+    Every wait here is bounded.
+    """
     device = resolve_input_device()
     dev_sr = _device_rate(device)
-    with mic_lock:
-        audio = sd.rec(
-            int(seconds * dev_sr), samplerate=dev_sr, channels=1,
-            dtype=_DTYPE, device=device,
-        )
-        sd.wait()
-    return _resample(_to_float(audio.flatten()), dev_sr, SAMPLE_RATE)
+    block = max(160, int(dev_sr * 0.02))
+    wanted = int(seconds * dev_sr)
+
+    frames: "queue.Queue[np.ndarray]" = queue.Queue()
+
+    def on_audio(indata, _frames, _time_info, _status):
+        frames.put(_to_float(indata[:, 0].copy()))
+
+    if not mic_lock.acquire(timeout=0.5):
+        return np.zeros(0, dtype=np.float32)   # a capture is in progress; skip this chunk
+    try:
+        collected: list[np.ndarray] = []
+        got = 0
+        with sd.InputStream(
+            samplerate=dev_sr, channels=1, dtype=_DTYPE,
+            device=device, blocksize=block, callback=on_audio,
+        ):
+            deadline = time.monotonic() + seconds + 1.5
+            while got < wanted and time.monotonic() < deadline:
+                try:
+                    frame = frames.get(timeout=0.25)
+                except queue.Empty:
+                    continue
+                collected.append(frame)
+                got += len(frame)
+    finally:
+        mic_lock.release()
+
+    if not collected:
+        return np.zeros(0, dtype=np.float32)
+    return _resample(np.concatenate(collected), dev_sr, SAMPLE_RATE)
 
 
 def record_utterance(on_speech_start=None, should_stop=None, on_level=None):
@@ -201,7 +247,8 @@ def record_utterance(on_speech_start=None, should_stop=None, on_level=None):
 
     Returns (audio, reason) where reason is "ok", "no_speech" (nothing was said
     within LISTEN_START_TIMEOUT), "too_short", "no_audio" (the device delivered
-    nothing — muted or misconfigured), or "cancelled".
+    nothing — muted or misconfigured), "mic_busy" (another thread is stuck on the
+    device), or "cancelled".
     `on_speech_start` is called the instant speech is detected, and `on_level`
     receives the loudness as 0..1 a few times a second — both exist so the UI can
     show that the microphone is genuinely hearing something.
@@ -229,8 +276,13 @@ def record_utterance(on_speech_start=None, should_stop=None, on_level=None):
     def on_audio(indata, _frames, _time_info, _status):
         frames.put(_to_float(indata[:, 0].copy()))
 
-    with mic_lock:
-        beep("start")
+    # Beep before anything can block, so pressing Listen always makes a sound.
+    beep("start")
+    # Bounded: if the wake-word thread is stuck on a bad device, fail loudly in a
+    # couple of seconds instead of sitting in Listening forever.
+    if not mic_lock.acquire(timeout=2.5):
+        return None, "mic_busy"
+    try:
         with sd.InputStream(
             samplerate=dev_sr, channels=1, dtype=_DTYPE,
             device=device, blocksize=block, callback=on_audio,
@@ -297,7 +349,10 @@ def record_utterance(on_speech_start=None, should_stop=None, on_level=None):
                         break
                 if elapsed >= MAX_COMMAND_SECONDS:
                     break
-        beep("end")
+    finally:
+        mic_lock.release()
+
+    beep("end")
 
     if speech_secs < MIN_SPEECH_SECONDS:
         return None, "too_short"
@@ -337,17 +392,32 @@ def transcribe(audio: np.ndarray, model: str = "", beam_size: int = 5) -> str:
     return " ".join(seg.text for seg in segments).strip()
 
 
-def listen(seconds: float) -> str:
+def listen(seconds: float):
     """Record a fixed window and transcribe it (wake-word path).
+
+    Returns (text, mic_ok). `mic_ok` is False when the device handed back nothing,
+    which lets the caller stop hammering a microphone that isn't there.
 
     Uses the smaller, faster wake model with greedy decoding: this runs every couple
     of seconds in the background, and it only has to spot one name — spending the
     accurate model's CPU here would slow down everything else.
     """
     audio = record(seconds)
+    if len(audio) == 0:
+        return "", False
     if is_silent(audio):
-        return ""
-    return transcribe(audio, model=WHISPER_WAKE_MODEL, beam_size=1)
+        return "", True
+    return transcribe(audio, model=WHISPER_WAKE_MODEL, beam_size=1), True
+
+
+def probe_microphone() -> bool:
+    """Is there a microphone that actually delivers audio? Checked once at startup
+    so a machine without one can say so up front instead of hanging on Listen."""
+    try:
+        return len(record(0.4)) > 0
+    except Exception as exc:
+        print(f"[stt] microphone probe failed: {exc}")
+        return False
 
 
 def listen_once(on_speech_start=None, should_stop=None, on_level=None):
@@ -373,6 +443,7 @@ if __name__ == "__main__":
                   f"  score={_score_input(dev)}")
     print()
     picked = resolve_input_device()
+    print(f"picked device index: {picked}")
     print(f"Loading Whisper '{WHISPER_MODEL}' (first run downloads it)...")
     preload()
     print("Speak after the beep...")
