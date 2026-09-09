@@ -1,6 +1,7 @@
 google-generativeai
 faster-whisper
 pyttsx3
+pywin32          # pythoncom, used by the offline SAPI fallback voice
 edge-tts
 PyQt6
 sounddevice

@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-**Greenfield / not yet started.** As of this writing the repository contains only these planning
-docs — no source, build config, or dependencies exist yet. This file captures the intended product
-and architecture so work can begin coherently. Update it as real code lands.
+**Milestone 1 shipped and iterating.** The app runs: PyQt6 UI, voice-activity-driven Whisper
+capture, Gemini brain with SQLite conversation memory, Edge neural TTS, and an open/close action
+engine with Start Menu lookup. What follows describes the product; see "Layout of the code" for
+where each layer actually lives.
 
 ## What This Project Is
 
@@ -82,15 +83,46 @@ the orb starts simple.
 | UI | **PyQt/PySide** | native Python window + animated orb |
 | STT | **Whisper (local, e.g. `faster-whisper`)** | offline, free, multilingual — handles English + Urdu + Hinglish; first run downloads a model (~1–2 GB) |
 | Wake word | **"Hey Mustafa"** (e.g. Porcupine custom keyword, or Whisper-based) | hands-free activation |
-| TTS | **pyttsx3 / Windows SAPI** | offline, free (robotic voice — fits the theme) |
-| Brain (LLM) | **Google Gemini** (`google-generativeai`) | free API key from Google AI Studio (aistudio.google.com) |
+| TTS | **edge-tts neural voice** (`ur-PK-AsadNeural`), pyttsx3/SAPI fallback | free, no key; needs internet |
+| Brain (LLM) | **Google Gemini** (`google-generativeai`), Flash-Lite | free API key from Google AI Studio (aistudio.google.com) |
 
-Only the Gemini call leaves the machine; STT, TTS, and wake word all run offline. No paid services required.
+STT and the wake word run offline; the Gemini call and the neural voice need the network (both free,
+and the voice falls back to the offline SAPI one). No paid services required.
 
 ## Build / Run / Test
 
-_None yet — no toolchain exists. Populate this section with the actual commands (install deps, run app,
-run a single test) as soon as the project is scaffolded._
+```
+pip install -r requirements.txt
+python run.py                       # launch the app
+
+python -m mustafa.stt               # mic diagnostic: list inputs, record + transcribe once
+python -m mustafa.tts               # audition the voice
+python -m mustafa.brain "notepad kholo"   # see the parsed intent
+python -m mustafa.actions open notepad    # test the action engine
+```
+
+There is no test suite yet; the `python -m` entry points above are the manual checks.
+
+## Layout of the code
+
+| Layer | File | Notes |
+|---|---|---|
+| Config | `mustafa/config.py` | every tunable, each overridable from `.env` |
+| UI tokens | `mustafa/ui/theme.py` | colours, type scale, spacing, per-state colour + copy |
+| UI components | `mustafa/ui/widgets.py` | orb, backdrop, level meter, chat bubbles, state pill |
+| UI layout | `mustafa/ui/orb_window.py` | window composition only, no painting |
+| STT | `mustafa/stt.py` | device scoring, VAD capture, Whisper models (command + wake) |
+| Wake word | `mustafa/wakeword.py` | energy-gated Whisper match on "mustafa" + variants |
+| Brain | `mustafa/brain.py` | one Gemini call returns action + target + spoken/display reply |
+| TTS | `mustafa/tts.py` | edge-tts neural voice, offline SAPI fallback |
+| Actions | `mustafa/actions.py` | `APP_MAP` plus Start Menu shortcut lookup, taskkill |
+| Memory | `mustafa/history.py` | SQLite turns, used for context and the chat view |
+| Orchestration | `mustafa/main.py` | Qt threads: command worker + wake-word worker |
+
+Conventions worth keeping: capture audio as **int16** (some Windows backends return garbage for
+float32), keep the Gemini model pinned to a **Flash-Lite** id (the "latest" alias has a ~5 req/min
+free tier), and write anything spoken aloud in **Urdu script including app names** — Latin words
+inside an Urdu voice are what made it sound robotic.
 
 ## Platform Notes
 

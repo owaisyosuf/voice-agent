@@ -9,9 +9,9 @@ import re
 
 import google.generativeai as genai
 
-from .config import GEMINI_MODEL, require_api_key
+from .config import GEMINI_FALLBACK_MODEL, GEMINI_MODEL, require_api_key
 
-_model = None
+_models: dict[str, "genai.GenerativeModel"] = {}
 
 SYSTEM_PROMPT = """You are Mustafa, a warm and respectful Urdu-speaking voice \
 assistant/butler for your user — like Jarvis. The user speaks in English, Urdu, or \
@@ -26,19 +26,28 @@ Classifying action/target:
 - "close", "band karo", "band kar do", "kill", "quit" -> action "close"
 - If the message is NOT a request to open/close an app or file (including plain chat, \
 greetings, or questions), use action "unknown" and target "".
-- Normalize target to a short app name: "Google Chrome" -> "chrome", "Notepad kholo" -> \
-"notepad".
+- Normalize target to a short app name in Latin letters: "Google Chrome" -> "chrome", \
+"Notepad kholo" -> "notepad". If the user says an app name in Urdu script, write the \
+target in Latin letters anyway ("نوٹ پیڈ" -> "notepad").
+- The speech-to-text is imperfect: if a word is close to a known app name \
+(e.g. "not pad", "no pad" -> notepad; "crome", "chorme" -> chrome), assume that app.
 
 Writing "reply" and "display" — same content, two scripts, for two different jobs:
-- "reply" is read aloud by a text-to-speech engine: write it ONLY in Urdu script \
-(Arabic/Nastaliq), except keep app/file names, numbers, and technical terms in Latin \
-script exactly as given. This script is what makes the voice's Urdu accent sound right.
+- "reply" is read aloud by an Urdu neural text-to-speech voice. Write it ENTIRELY in \
+Urdu script (Arabic/Nastaliq) — INCLUDING app and file names, transliterated into Urdu \
+script ("notepad" -> "نوٹ پیڈ", "chrome" -> "کروم", "calculator" -> "کیلکولیٹر", \
+"YouTube" -> "یوٹیوب"). NEVER leave Latin letters, digits, emojis, markdown (* _ # `) \
+or bullet lists inside "reply": the voice mispronounces Latin words with a broken \
+accent, and that single detail is what makes it sound robotic instead of human. Write \
+numbers as Urdu words ("5" -> "پانچ").
+- Write "reply" the way a person actually talks: short sentences, natural commas so \
+the voice can breathe, no lists, no headings, no parentheses.
 - "display" is shown as on-screen text: write the SAME meaning in Roman Urdu (Roman/\
 Latin transliteration) — UNLESS the content is naturally English (e.g. the user asked \
 in English, or the answer is technical/code/English-heavy), in which case write \
 "display" in plain English instead. Never put Arabic/Nastaliq script in "display".
 - If action is "open" or "close": write a short, warm line as if you are about to do it \
-now (e.g. reply "notepad کھولتا ہوں" / display "notepad kholta hoon") — you do not yet \
+now (e.g. reply "نوٹ پیڈ کھولتا ہوں" / display "notepad kholta hoon") — you do not yet \
 know for certain it will succeed, so don't over-promise, just sound natural and willing.
 - If action is "unknown": this may be a real question, a greeting, or small talk. If \
 it's a genuine question (facts, explanations, advice, calculations, translations, \
@@ -53,25 +62,59 @@ ask how they are (khairiyat) before the rest of your reply.
 - Sound like a real human, not a robot: warm, natural, and varied — never repeat the \
 exact same sentence every turn. Every so often (not every turn), close by offering \
 further help, e.g. "Koi aur hukum?" or "Aur kuch chahiye?" — vary the phrasing.
-- Keep it brief enough to speak comfortably; a real question can run a little longer \
-than small talk, but stay concise.
+- Keep it short enough to speak comfortably — one or two sentences for commands and \
+small talk. A real question may run a little longer, but never more than a few lines: \
+the user is waiting while it is spoken aloud.
 
 Examples:
-"open notepad" -> {"action": "open", "target": "notepad", "reply": "جی بالکل، notepad \
+"open notepad" -> {"action": "open", "target": "notepad", "reply": "جی بالکل، نوٹ پیڈ \
 کھولتا ہوں۔", "display": "Ji bilkul, notepad kholta hoon."}
-"chrome band karo" -> {"action": "close", "target": "chrome", "reply": "ٹھیک ہے، chrome \
+"chrome band karo" -> {"action": "close", "target": "chrome", "reply": "ٹھیک ہے، کروم \
 بند کر رہا ہوں۔", "display": "Theek hai, chrome band kar raha hoon."}
 "what's the capital of France" -> {"action": "unknown", "target": "", "reply": "پیرس \
 فرانس کا دارالحکومت ہے۔", "display": "Paris is the capital of France."}
 """
 
+# Ask for JSON directly instead of hoping it shows up inside prose.
+_GENERATION_CONFIG = {
+    "response_mime_type": "application/json",
+    "temperature": 0.7,      # some variety in phrasing, without going off-script
+    "max_output_tokens": 500,
+}
 
-def _get_model():
-    global _model
-    if _model is None:
+
+def _get_model(name: str):
+    if name not in _models:
         genai.configure(api_key=require_api_key())
-        _model = genai.GenerativeModel(GEMINI_MODEL, system_instruction=SYSTEM_PROMPT)
-    return _model
+        _models[name] = genai.GenerativeModel(
+            name,
+            system_instruction=SYSTEM_PROMPT,
+            generation_config=_GENERATION_CONFIG,
+        )
+    return _models[name]
+
+
+def preload() -> None:
+    """Open the Gemini connection at startup.
+
+    The very first API call pays ~20 s of client/auth/channel setup. Doing it while
+    the app is warming up means the user's first real command answers in ~1 s.
+    count_tokens is used because it costs no generation quota.
+    """
+    try:
+        _get_model(GEMINI_MODEL).count_tokens("hi")
+    except Exception as exc:
+        print(f"[brain] preload skipped: {exc}")
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "quota" in text or "rate limit" in text
+
+
+def _should_try_fallback(exc: Exception) -> bool:
+    """Rate-limited, or the model isn't available on this key — both are worth a retry."""
+    return _is_quota_error(exc) or "404" in str(exc)
 
 
 def _extract_json(raw: str) -> dict:
@@ -86,14 +129,16 @@ def _extract_json(raw: str) -> dict:
 
 
 def think(text: str, turn: int = 1, history=None) -> dict:
-    """Return {"action", "target", "reply", "display"} for one turn, in a single Gemini call.
+    """Return {"action", "target", "reply", "display", "error"} for one turn.
 
     `reply` is Urdu script (for TTS accent), `display` is Roman Urdu/English (for on-screen
-    text). `history`: optional list of (role, text) tuples, oldest first, for memory.
+    text). `error` is "" normally, or "quota"/"failed" so the caller can say something
+    truthful instead of pretending it didn't understand.
+    `history`: optional list of (role, text) tuples, oldest first, for memory.
     """
     text = (text or "").strip()
     if not text:
-        return {"action": "unknown", "target": "", "reply": "", "display": ""}
+        return _empty()
 
     context = ""
     if history:
@@ -104,19 +149,33 @@ def think(text: str, turn: int = 1, history=None) -> dict:
         context += "---\n"
     context += f"Turn number: {turn}\nUser: {text}"
 
-    try:
-        resp = _get_model().generate_content(context)
-        data = _extract_json((resp.text or "").strip())
-        action = data.get("action", "unknown")
-        if action not in ("open", "close"):
-            action = "unknown"
-        target = str(data.get("target", "")).strip().lower()
-        reply = str(data.get("reply", "")).strip()
-        display = str(data.get("display", "")).strip()
-        return {"action": action, "target": target, "reply": reply, "display": display}
-    except Exception as exc:  # network/API/parse issues -> safe fallback
-        print(f"[brain] error: {exc}")
-        return {"action": "unknown", "target": "", "reply": "", "display": ""}
+    for model_name in (GEMINI_MODEL, GEMINI_FALLBACK_MODEL):
+        try:
+            resp = _get_model(model_name).generate_content(context)
+            return _parse(_extract_json((resp.text or "").strip()))
+        except Exception as exc:  # network/API/parse issues
+            print(f"[brain] {model_name} error: {exc}")
+            if _should_try_fallback(exc) and model_name != GEMINI_FALLBACK_MODEL:
+                continue  # rate-limited / unavailable: try the fallback model once
+            return _empty("quota" if _is_quota_error(exc) else "failed")
+    return _empty("quota")
+
+
+def _parse(data: dict) -> dict:
+    action = data.get("action", "unknown")
+    if action not in ("open", "close"):
+        action = "unknown"
+    return {
+        "action": action,
+        "target": str(data.get("target", "")).strip().lower(),
+        "reply": str(data.get("reply", "")).strip(),
+        "display": str(data.get("display", "")).strip(),
+        "error": "",
+    }
+
+
+def _empty(error: str = "") -> dict:
+    return {"action": "unknown", "target": "", "reply": "", "display": "", "error": error}
 
 
 if __name__ == "__main__":

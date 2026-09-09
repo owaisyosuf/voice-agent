@@ -49,10 +49,22 @@ def recent(limit: int = 6) -> list[tuple[str, str]]:
     return list(reversed(rows))
 
 
-def all_turns(limit: int = 200) -> list[tuple[str, str]]:
-    """Last `limit` turns, oldest first — used to repopulate the chat view on startup."""
+def all_turns(limit: int = 200) -> list[tuple[str, str, str]]:
+    """Last `limit` turns as (role, text, timestamp), oldest first — used to
+    repopulate the chat view, which shows the time each message was sent."""
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT role, text FROM turns ORDER BY id DESC LIMIT ?", (limit,)
+        "SELECT role, text, ts FROM turns ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
     return list(reversed(rows))
+
+
+def count() -> int:
+    return _get_conn().execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+
+
+def clear() -> None:
+    """Forget everything. Backs the Clear button in the conversation panel."""
+    conn = _get_conn()
+    conn.execute("DELETE FROM turns")
+    conn.commit()
