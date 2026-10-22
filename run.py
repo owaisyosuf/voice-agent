@@ -1,7 +1,15 @@
 """Launch MUSTAFA:  python run.py"""
 
 import ctypes
+import os
 import sys
+
+# The windowed desktop build has no console, so stdout/stderr are None — and the
+# progress bar of a first-run Whisper model download writes to stderr and would crash.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 # Urdu text in log lines must not blow up on a cp1252 console.
 for _stream in (sys.stdout, sys.stderr):

@@ -1,0 +1,6 @@
+# Extra dependency for the desktop build only — freezing the app into an .exe.
+#
+#   pip install -r requirements.txt -r requirements-desktop.txt
+#   python build_desktop.py
+
+pyinstaller==6.22.3

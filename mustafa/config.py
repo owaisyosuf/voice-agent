@@ -6,10 +6,16 @@ without editing code — see the env var name next to each setting.
 """
 
 import os
+import sys
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# The desktop build (see build_desktop.py) keeps its .env beside Mustafa.exe.
+# Running from source, the usual search from the working directory applies.
+if getattr(sys, "frozen", False):
+    load_dotenv(os.path.join(os.path.dirname(sys.executable), ".env"))
+else:
+    load_dotenv()
 
 
 def _env_str(key: str, default: str) -> str:

@@ -4,9 +4,15 @@ across restarts and the UI can show a full chat log.
 
 import os
 import sqlite3
+import sys
 from datetime import datetime, timezone
 
-_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "history.db")
+# A rebuild of the desktop app replaces its whole folder, so the frozen app keeps
+# its history in %LOCALAPPDATA% where it survives; from source it stays in-tree.
+if getattr(sys, "frozen", False):
+    _DB_PATH = os.path.join(os.environ["LOCALAPPDATA"], "Mustafa", "history.db")
+else:
+    _DB_PATH = os.path.join(os.path.dirname(__file__), "data", "history.db")
 
 _conn = None
 

@@ -6,3 +6,8 @@ models/
 venv/
 .claude/settings.local.json
 mustafa/data/
+
+# PyInstaller output (see build_desktop.py)
+build/
+dist/
+*.spec
