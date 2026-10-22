@@ -32,6 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 APP_NAME = "Mustafa"
+ICON = ROOT / "assets" / "app.ico"  # optional; skipped when absent
 
 
 def main() -> None:
@@ -48,6 +49,8 @@ def main() -> None:
         "--exclude-module", "tkinter",
         str(ROOT / "run.py"),
     ]
+    if ICON.exists():
+        cmd[-1:-1] = ["--icon", str(ICON)]
     print("Building — this takes a few minutes.\n", flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
 
