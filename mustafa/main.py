@@ -89,6 +89,12 @@ class CommandWorker(QtCore.QThread):
     def run(self):
         self.state.emit("Warming up")
 
+        # google.genai is imported lazily (see brain._get_client), so touch it here,
+        # on this thread, before the whisper thread starts. Two threads racing to
+        # first-import the shared "google" namespace package at the same instant can
+        # corrupt its path and raise "cannot import name 'genai' from 'google'".
+        from google import genai  # noqa: F401
+
         # Whisper and Gemini know nothing about each other, and one waits on the disk
         # while the other waits on the network — so warm them at the same time.
         whisper = threading.Thread(target=self._preload_whisper, daemon=True)
